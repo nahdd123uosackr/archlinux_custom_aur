@@ -4,11 +4,10 @@
 # 사용법: scripts/update-package.sh <패키지디렉터리> <github-owner/repo> [태그접두사]
 # 예:    scripts/update-package.sh ieumoffice-bin pblsketch/openoffice v
 #
-# 동작:
-#   1) GitHub 최신 릴리스 태그를 읽어 버전을 뽑는다
-#   2) PKGBUILD의 pkgver와 같으면 아무것도 하지 않는다 (exit 0)
-#   3) 다르면 source URL / pkgver / pkgrel / sha512sums를 갱신하고 .SRCINFO를 다시 만든다
-#   4) 변경이 있었으면 마지막 줄에 CHANGED=1 을 출력한다
+# 환경변수:
+#   BUMP_PKGREL=1  업스트림이 최신일 때 pkgrel만 올려 AUR push 경로를 검증한다
+#
+# 출력: 마지막 줄 CHANGED=1 (변경 있음) 또는 CHANGED=0 (변경 없음)
 set -euo pipefail
 
 pkgdir=${1:?package dir required}
@@ -18,6 +17,22 @@ api="https://api.github.com/repos/${ghrepo}"
 dl="https://github.com/${ghrepo}/releases/download"
 
 [[ -f ${pkgdir}/PKGBUILD ]] || { echo "PKGBUILD not found: ${pkgdir}" >&2; exit 1; }
+command -v makepkg >/dev/null 2>&1 || { echo "makepkg 없음" >&2; exit 1; }
+
+gen_srcinfo() {
+  local dir=$1 builder buildtmp
+  if [[ ${EUID} -ne 0 ]]; then
+    ( cd "${dir}" && makepkg --printsrcinfo > .SRCINFO )
+    return
+  fi
+  builder=$(id -un corp 2>/dev/null || id -un builder 2>/dev/null || true)
+  [[ -z ${builder} ]] && { echo "root 실행: makepkg용 일반 사용자를 찾을 수 없습니다" >&2; return 1; }
+  buildtmp=$(mktemp -d)
+  cp "${dir}/PKGBUILD" "${buildtmp}/"
+  chown -R "${builder}" "${buildtmp}"
+  su -s /bin/bash "${builder}" -c "cd '${buildtmp}' && makepkg --printsrcinfo" > "${dir}/.SRCINFO"
+  rm -rf "${buildtmp}"
+}
 
 tag=$(curl -fsSL --retry 3 "${api}/releases/latest" | jq -r '.tag_name')
 [[ -n ${tag} && ${tag} != null ]] || { echo "cannot read latest tag" >&2; exit 1; }
@@ -25,15 +40,25 @@ newver=${tag#"$pretag"}
 oldver=$(sed -n 's/^pkgver=//p' "${pkgdir}/PKGBUILD")
 
 echo "latest tag=${tag} -> pkgver=${newver} (local=${oldver})"
+
 if [[ ${newver} == "${oldver}" ]]; then
+  if [[ ${BUMP_PKGREL:-0} == 1 ]]; then
+    oldrel=$(sed -n 's/^pkgrel=//p' "${pkgdir}/PKGBUILD")
+    newrel=$(( oldrel + 1 ))
+    echo "동일 버전 - AUR push 경로 검증을 위해 pkgrel ${oldrel} -> ${newrel}"
+    sed -i "s/^pkgrel=.*/pkgrel=${newrel}/" "${pkgdir}/PKGBUILD"
+    gen_srcinfo "${pkgdir}"
+    echo ".SRCINFO 갱신 완료"
+    echo "CHANGED=1"
+    exit 0
+  fi
   echo "이미 최신입니다."
   echo "CHANGED=0"
   exit 0
 fi
 
-# 릴리스 자산에서 source 파일 이름을 찾는다 (rpm 우선, 없으면 AppImage)
 mapfile -t assets < <(curl -fsSL --retry 3 "${api}/releases/latest" | jq -r '.assets[].name')
-pick() { local pat=$1; printf '%s\n' "${assets[@]}" | grep -E "${pat}" | head -1 || true; }
+pick() { printf '%s\n' "${assets[@]}" | grep -E "$1" | head -1 || true; }
 
 rpm=$(pick '\.rpm$')
 appimage=$(pick '\.AppImage$')
@@ -45,63 +70,42 @@ trap 'rm -rf "${tmp}"' EXIT
 declare -a urls=() sums=()
 
 if [[ -n ${rpm} ]]; then
-  echo "asset: ${rpm}"
-  curl -fsSL --retry 3 -o "${tmp}/${rpm}" "${dl}/${tag}/${rpm}"
-  urls+=("${dl}/${tag}/${rpm}")
-  sums+=("$(sha512sum "${tmp}/${rpm}" | cut -d' ' -f1)")
-  rm -f "${tmp}/${rpm}"
+  asset=${rpm}
 elif [[ -n ${appimage} ]]; then
-  echo "asset: ${appimage}"
-  curl -fsSL --retry 3 -o "${tmp}/${appimage}" "${dl}/${tag}/${appimage}"
-  urls+=("${dl}/${tag}/${appimage}")
-  sums+=("$(sha512sum "${tmp}/${appimage}" | cut -d' ' -f1)")
-  rm -f "${tmp}/${appimage}"
+  asset=${appimage}
 else
   echo "no .rpm/.AppImage asset in ${tag}" >&2
   exit 1
 fi
 
+echo "asset: ${asset}"
+curl -fsSL --retry 3 -o "${tmp}/${asset}" "${dl}/${tag}/${asset}"
+urls+=("${dl}/${tag}/${asset}")
+sums+=("$(sha512sum "${tmp}/${asset}" | cut -d' ' -f1)")
+rm -f "${tmp}/${asset}"
+
 curl -fsSL --retry 3 -o "${tmp}/LICENSE" "${license_url}"
 urls+=("${license_url}")
 sums+=("$(sha512sum "${tmp}/LICENSE" | cut -d' ' -f1)")
 
-# PKGBUILD 갱신 (python로 안전하게 치환)
-python3 - "$pkgdir" "$newver" "$tag" "${urls[@]}" -- "${sums[@]}" <<'PY'
+python3 - "$pkgdir" "$newver" "${urls[@]}" -- "${sums[@]}" <<'PY'
 import re, sys
-path, ver, tag = sys.argv[1], sys.argv[2], sys.argv[3]
-argv = sys.argv[4:]
+path, ver = sys.argv[1], sys.argv[2]
+argv = sys.argv[3:]
 sep = argv.index('--')
 urls, sums = argv[:sep], argv[sep+1:]
-text = open(f"{path}/PKGBUILD", encoding='utf-8').read()
+file = f"{path}/PKGBUILD"
+text = open(file, encoding='utf-8').read()
 text = re.sub(r'^pkgver=.*$', f'pkgver={ver}', text, flags=re.M)
 text = re.sub(r'^pkgrel=.*$', 'pkgrel=1', text, flags=re.M)
-if 'releases/download/v${pkgver}' not in text:
-    raise SystemExit('source URL pattern not found (expected releases/download/v${pkgver})')
 src = "source=(" + "\n        ".join(f'"{u}"' for u in urls) + "\n)"
 text = re.sub(r'^source=\(.*?\)\n', src + "\n", text, flags=re.M | re.S, count=1)
 sha = "sha512sums=(" + "\n            ".join(f"'{s}'" for s in sums) + "\n)"
 text = re.sub(r"^sha512sums=\(.*?\)\n", sha + "\n", text, flags=re.M | re.S, count=1)
-open(f"{path}/PKGBUILD", 'w', encoding='utf-8').write(text)
+open(file, 'w', encoding='utf-8').write(text)
 print(f"PKGBUILD -> {ver}")
 PY
 
-# .SRCINFO 재생성 (makepkg 필요, root로는 실행 불가하므로 임시 디렉터리 + 일반 사용자)
-if ! command -v makepkg >/dev/null 2>&1; then
-  echo "경고: makepkg 없음 - .SRCINFO를 갱신하지 못했습니다" >&2
-  exit 1
-fi
-
-if [[ ${EUID} -ne 0 ]]; then
-  ( cd "${pkgdir}" && makepkg --printsrcinfo > .SRCINFO )
-else
-  builder=$(id -un corp 2>/dev/null || id -un builder 2>/dev/null || true)
-  [[ -z ${builder} ]] && { echo "root 실행: makepkg용 일반 사용자를 찾을 수 없습니다" >&2; exit 1; }
-  buildtmp=$(mktemp -d)
-  cp "${pkgdir}/PKGBUILD" "${buildtmp}/"
-  chown -R "${builder}" "${buildtmp}"
-  su -s /bin/bash "${builder}" -c "cd '${buildtmp}' && makepkg --printsrcinfo" > "${pkgdir}/.SRCINFO"
-  rm -rf "${buildtmp}"
-fi
+gen_srcinfo "${pkgdir}"
 echo ".SRCINFO 갱신 완료"
-
 echo "CHANGED=1"

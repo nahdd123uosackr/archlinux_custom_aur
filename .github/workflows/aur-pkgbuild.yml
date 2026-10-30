@@ -8,6 +8,11 @@ on:
   schedule:
     - cron: '0 0 * * *'   # 매일 09:00 KST
   workflow_dispatch:
+    inputs:
+      bump_pkgrel:
+        description: '업스트림 변경이 없어도 pkgrel을 올려 AUR push 경로를 검증합니다'
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -42,6 +47,8 @@ jobs:
 
       - name: Detect new upstream release and update PKGBUILD
         id: update
+        env:
+          BUMP_PKGREL: ${{ inputs.bump_pkgrel && '1' || '0' }}
         run: |
           set -euo pipefail
           bash scripts/update-package.sh ieumoffice-bin pblsketch/openoffice v | tee /tmp/update.log
