@@ -19,7 +19,7 @@ DRY_RUN=0
 [[ ${1:-} == --dry-run ]] && DRY_RUN=1
 
 [[ -f ${AUR_KEY} ]] || { echo "SSH 키가 없습니다: ${AUR_KEY}" >&2; exit 1; }
-export GIT_SSH_COMMAND="ssh -i ${AUR_KEY} -o IdentitiesOnly=yes -o BatchMode=yes"
+export GIT_SSH_COMMAND="ssh -i ${AUR_KEY} -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=accept-new"
 
 # 1) 미러 저장소 최신화 (변경이 없으면 즉시 종료)
 git -C "${REPO_DIR}" pull --ff-only --quiet || { echo "pull 실패: ${REPO_DIR}" >&2; exit 1; }

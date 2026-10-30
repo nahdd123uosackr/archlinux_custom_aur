@@ -1,76 +1,94 @@
-name: AUR PKGBUILD auto-update
+name: AUR release sync
 
-# 자격증명을 쓰지 않는다 (AUR SSH 키는 로컬에만 보관).
-# 이 워크플로는 "PKGBUILD/.SRCINFO 갱신 커밋"까지만 수행하고,
-# AUR push는 로컬 scripts/deploy-aur.sh 가 담당한다.
+# 업스트림 릴리스 확인 → PKGBUILD/.SRCINFO 갱신 → 미러 저장소 커밋 → AUR push
+# 필요한 secret: AUR_SSH_PRIVATE_KEY  (AUR 계정에 등록한 전용 키의 개인키)
+# 필요한 secret 아님: GITHUB_TOKEN (자동 제공)
 
 on:
   schedule:
     - cron: '0 0 * * *'   # 매일 09:00 KST
   workflow_dispatch:
-  push:
-    paths:
-      - 'scripts/**'
-      - '.github/workflows/**'
 
 permissions:
   contents: write
   issues: write
 
+concurrency:
+  group: aur-sync
+  cancel-in-progress: false
+
 jobs:
-  update:
+  sync:
     runs-on: ubuntu-latest
     container:
       image: archlinux/archlinux:base-devel
       options: --user root
+    env:
+      AUR_SSH_PRIVATE_KEY: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
+      AUR_KEY: /root/.ssh/aur_ci
+      AUR_ROOT: /tmp/aur-push
     steps:
-      - name: Install deps
-        run: pacman -Syu --noconfirm --needed git curl jq python sudo openssh
+      - name: Install dependencies
+        run: pacman -Syu --noconfirm --needed git curl jq python openssh
 
       - uses: actions/checkout@v4
 
-      - name: git safe.directory
-        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+      - name: Prepare build user and git
+        run: |
+          useradd -m builder
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          git config --global user.name  "aur-bot"
+          git config --global user.email "aur-bot@users.noreply.github.com"
 
-      - name: Check for new upstream release
-        id: check
+      - name: Detect new upstream release and update PKGBUILD
+        id: update
         run: |
           set -euo pipefail
-          # 패키지가 여러 개면 여기에 한 줄씩 추가
           bash scripts/update-package.sh ieumoffice-bin pblsketch/openoffice v | tee /tmp/update.log
           if grep -q '^CHANGED=1$' /tmp/update.log; then
-            echo "changed=1" >> "$GITHUB_OUTPUT"
             ver=$(sed -n 's/^pkgver=//p' ieumoffice-bin/PKGBUILD)
+            echo "changed=1" >> "$GITHUB_OUTPUT"
             echo "version=$ver" >> "$GITHUB_OUTPUT"
+            git diff --stat
           else
             echo "changed=0" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Validate PKGBUILD
-        if: steps.check.outputs.changed == '1'
+      - name: Validate package sources
+        if: steps.update.outputs.changed == '1'
         run: |
           set -euo pipefail
-          useradd -m builder || true
-          chown -R builder:builder "$GITHUB_WORKSPACE"
-          su builder -c "cd ieumoffice-bin && makepkg --verifysource --noconfirm"
-          su builder -c "cd ieumoffice-bin && makepkg --printsrcinfo > .SRCINFO.new && diff -u .SRCINFO .SRCINFO.new && rm .SRCINFO.new"
+          rm -rf /tmp/verify && cp -r ieumoffice-bin /tmp/verify
+          chown -R builder:builder /tmp/verify
+          su builder -s /bin/bash -c 'cd /tmp/verify && makepkg --verifysource --noconfirm'
 
-      - name: Commit updated PKGBUILD
-        if: steps.check.outputs.changed == '1'
+      - name: Commit to mirror repository
+        if: steps.update.outputs.changed == '1'
         run: |
           set -euo pipefail
-          git config user.name  "aur-bot"
-          git config user.email "aur-bot@users.noreply.github.com"
           git add ieumoffice-bin/PKGBUILD ieumoffice-bin/.SRCINFO
-          git commit -m "ieumoffice-bin: update to ${{ steps.check.outputs.version }}"
+          git commit -m "ieumoffice-bin: update to ${{ steps.update.outputs.version }}"
           git push
+
+      - name: Deploy to AUR
+        if: steps.update.outputs.changed == '1'
+        run: |
+          set -euo pipefail
+          install -d -m700 /root/.ssh
+          printf '%s\n' "$AUR_SSH_PRIVATE_KEY" > "$AUR_KEY"
+          chmod 600 "$AUR_KEY"
+          ssh-keyscan -t ed25519 aur.archlinux.org >> /root/.ssh/known_hosts 2>/dev/null
+          bash scripts/deploy-aur.sh
+          rm -f "$AUR_KEY"
 
       - name: Report failure
         if: failure()
         run: |
+          title="AUR 동기화 실패: $(date -u +%F)"
+          body="로그: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
           curl -fsSL -X POST \
             -H "Authorization: Bearer ${{ github.token }}" \
             -H "Accept: application/vnd.github+json" \
             "${GITHUB_API_URL}/repos/${{ github.repository }}/issues" \
-            -d "{\"title\":\"AUR pkgbuild 자동 갱신 실패: $(date -u +%F)\",\"body\":\"로그: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\"}" \
-            > /dev/null || echo "issue 생성 실패 (무시)"
+            -d "{\"title\":\"${title}\",\"body\":\"${body}\"}" \
+            > /dev/null || echo "이슈 생성 실패 (무시)"
