@@ -6,7 +6,7 @@ name: AUR release sync
 
 on:
   schedule:
-    - cron: '0 0 * * *'   # 매일 09:00 KST
+    - cron: '*/30 * * * *'   # 30분마다 (GitHub schedule은 지연될 수 있음)
   workflow_dispatch:
     inputs:
       bump_pkgrel:
@@ -87,6 +87,25 @@ jobs:
           ssh-keyscan -t ed25519 aur.archlinux.org >> /root/.ssh/known_hosts 2>/dev/null
           bash scripts/deploy-aur.sh
           rm -f "$AUR_KEY"
+
+      - name: Keepalive (schedule 비활성화 방지)
+        if: always()
+        run: |
+          # 공개 저장소는 60일간 커밋이 없으면 schedule 워크플로가 자동 비활성화된다.
+          # 매주 월요일에 타임스탬프 커밋을 남겨 이를 방지한다.
+          if [ "$(date -u +%u)" != "1" ]; then
+            echo "월요일이 아니므로 생략"
+            exit 0
+          fi
+          mkdir -p .github
+          date -u +%FT%TZ > .github/last-sync
+          git add .github/last-sync
+          if git diff --cached --quiet; then
+            echo "변경 없음"
+          else
+            git commit -m "chore: keepalive $(date -u +%F)"
+            git push
+          fi
 
       - name: Report failure
         if: failure()

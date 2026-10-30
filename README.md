@@ -11,7 +11,7 @@ Arch Linux용 커스텀 AUR 패키지 미러입니다. AUR에는 이 저장소�
 ## 자동화 구조
 
 ```
-GitHub Actions (매일 09:00 KST, schedule)
+GitHub Actions (30분마다, schedule)
   ├─ 업스트림 최신 릴리스 확인
   ├─ PKGBUILD/.SRCINFO 갱신 (pkgver + sha512 + source URL)
   ├─ makepkg --verifysource 로 체크섬 검증
@@ -20,6 +20,9 @@ GitHub Actions (매일 09:00 KST, schedule)
 ```
 
 로컬 데몬이 필요 없습니다. 서버에서 전 과정이 끝납니다.
+
+- 확인 주기는 30분입니다. GitHub schedule 특성상 수 분~수십 분 지연될 수 있습니다.
+- 공개 저장소는 60일간 커밋이 없으면 schedule이 자동 비활성화되므로, 매주 월요일 타임스탬프 커밋(keepalive)을 남깁니다.
 
 ## 최초 설정 (1회)
 
