@@ -1,0 +1,8 @@
+[Unit]
+Description=Push PKGBUILD updates to AUR (local SSH key)
+After=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/projects/archlinux_custom_aur
+ExecStart=%h/projects/archlinux_custom_aur/scripts/deploy-aur.sh

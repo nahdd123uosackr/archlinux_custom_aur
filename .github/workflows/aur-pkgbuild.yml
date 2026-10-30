@@ -1,0 +1,76 @@
+name: AUR PKGBUILD auto-update
+
+# 자격증명을 쓰지 않는다 (AUR SSH 키는 로컬에만 보관).
+# 이 워크플로는 "PKGBUILD/.SRCINFO 갱신 커밋"까지만 수행하고,
+# AUR push는 로컬 scripts/deploy-aur.sh 가 담당한다.
+
+on:
+  schedule:
+    - cron: '0 0 * * *'   # 매일 09:00 KST
+  workflow_dispatch:
+  push:
+    paths:
+      - 'scripts/**'
+      - '.github/workflows/**'
+
+permissions:
+  contents: write
+  issues: write
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    container:
+      image: archlinux/archlinux:base-devel
+      options: --user root
+    steps:
+      - name: Install deps
+        run: pacman -Syu --noconfirm --needed git curl jq python sudo openssh
+
+      - uses: actions/checkout@v4
+
+      - name: git safe.directory
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
+      - name: Check for new upstream release
+        id: check
+        run: |
+          set -euo pipefail
+          # 패키지가 여러 개면 여기에 한 줄씩 추가
+          bash scripts/update-package.sh ieumoffice-bin pblsketch/openoffice v | tee /tmp/update.log
+          if grep -q '^CHANGED=1$' /tmp/update.log; then
+            echo "changed=1" >> "$GITHUB_OUTPUT"
+            ver=$(sed -n 's/^pkgver=//p' ieumoffice-bin/PKGBUILD)
+            echo "version=$ver" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=0" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Validate PKGBUILD
+        if: steps.check.outputs.changed == '1'
+        run: |
+          set -euo pipefail
+          useradd -m builder || true
+          chown -R builder:builder "$GITHUB_WORKSPACE"
+          su builder -c "cd ieumoffice-bin && makepkg --verifysource --noconfirm"
+          su builder -c "cd ieumoffice-bin && makepkg --printsrcinfo > .SRCINFO.new && diff -u .SRCINFO .SRCINFO.new && rm .SRCINFO.new"
+
+      - name: Commit updated PKGBUILD
+        if: steps.check.outputs.changed == '1'
+        run: |
+          set -euo pipefail
+          git config user.name  "aur-bot"
+          git config user.email "aur-bot@users.noreply.github.com"
+          git add ieumoffice-bin/PKGBUILD ieumoffice-bin/.SRCINFO
+          git commit -m "ieumoffice-bin: update to ${{ steps.check.outputs.version }}"
+          git push
+
+      - name: Report failure
+        if: failure()
+        run: |
+          curl -fsSL -X POST \
+            -H "Authorization: Bearer ${{ github.token }}" \
+            -H "Accept: application/vnd.github+json" \
+            "${GITHUB_API_URL}/repos/${{ github.repository }}/issues" \
+            -d "{\"title\":\"AUR pkgbuild 자동 갱신 실패: $(date -u +%F)\",\"body\":\"로그: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\"}" \
+            > /dev/null || echo "issue 생성 실패 (무시)"
