@@ -71,7 +71,7 @@ jobs:
           }
 
           update_pkg ieumoffice-bin pblsketch/openoffice v
-          update_pkg rhwp-bin edwardkim/rhwp v
+          update_pkg rhwp_bin edwardkim/rhwp v
 
           echo "changed=${changed}" >> "$GITHUB_OUTPUT"
           echo "packages=${changed_pkgs}" >> "$GITHUB_OUTPUT"
