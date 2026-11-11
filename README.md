@@ -4,16 +4,17 @@ Arch Linux용 커스텀 AUR 패키지 미러입니다. AUR에는 이 저장소�
 
 ## 패키지
 
-| 패키지 | 설명 | AUR |
-|---|---|---|
-| `ieumoffice-bin` | 이음오피스(IeumOffice) — DOCX/XLSX/PPTX/PDF/HWP/마크다운 오피스 (prebuilt rpm) | https://aur.archlinux.org/packages/ieumoffice-bin |
+| 패키지 | 설명 | 업스트림 | AUR |
+|---|---|---|---|
+| `ieumoffice-bin` | 이음오피스(IeumOffice) — DOCX/XLSX/PPTX/PDF/HWP/마크다운 오피스 (prebuilt rpm) | [pblsketch/openoffice](https://github.com/pblsketch/openoffice) | https://aur.archlinux.org/packages/ieumoffice-bin |
+| `rhwp-bin` | rhwp — Rust/WASM 기반 HWP/HWPX 뷰어·에디터 CLI (prebuilt binary) | [edwardkim/rhwp](https://github.com/edwardkim/rhwp) | https://aur.archlinux.org/packages/rhwp-bin |
 
 ## 자동화 구조
 
 ```
 GitHub Actions (30분마다, schedule)
-  ├─ 업스트림 최신 릴리스 확인
-  ├─ PKGBUILD/.SRCINFO 갱신 (pkgver + sha512 + source URL)
+  ├─ 업스트림 최신 릴리스 확인 (ieumoffice-bin, rhwp-bin)
+  ├─ 변경된 패키지의 PKGBUILD/.SRCINFO 갱신 (pkgver + sha512 + source URL)
   ├─ makepkg --verifysource 로 체크섬 검증
   ├─ 이 저장소에 커밋
   └─ AUR 저장소에 push   ← secret AUR_SSH_PRIVATE_KEY 사용
@@ -55,6 +56,7 @@ gh secret set AUR_SSH_PRIVATE_KEY < ~/.ssh/aur_ci
 ```bash
 # 갱신 + 미러 커밋만 (AUR push 없음)
 scripts/update-package.sh ieumoffice-bin pblsketch/openoffice v
+scripts/update-package.sh rhwp-bin edwardkim/rhwp v
 
 # 로컬에서 AUR push (Actions 대신 수동으로 돌릴 때)
 AUR_KEY=~/.ssh/aur scripts/deploy-aur.sh --dry-run
@@ -74,4 +76,5 @@ AUR_KEY=~/.ssh/aur scripts/deploy-aur.sh
 
 ```bash
 yay -S ieumoffice-bin
+yay -S rhwp-bin
 ```

@@ -62,6 +62,7 @@ pick() { printf '%s\n' "${assets[@]}" | grep -E "$1" | head -1 || true; }
 
 rpm=$(pick '\.rpm$')
 appimage=$(pick '\.AppImage$')
+tar_x86_64=$(pick '(^|/)rhwp-v[0-9][^/]*-linux-x86_64\.tar\.gz$|^rhwp-v[0-9].*-linux-x86_64\.tar\.gz$|linux-x86_64\.tar\.gz$')
 license_url="https://raw.githubusercontent.com/${ghrepo}/${tag}/LICENSE"
 
 tmp=$(mktemp -d)
@@ -73,8 +74,10 @@ if [[ -n ${rpm} ]]; then
   asset=${rpm}
 elif [[ -n ${appimage} ]]; then
   asset=${appimage}
+elif [[ -n ${tar_x86_64} ]]; then
+  asset=${tar_x86_64}
 else
-  echo "no .rpm/.AppImage asset in ${tag}" >&2
+  echo "no supported release asset (.rpm, .AppImage, linux-x86_64.tar.gz) in ${tag}" >&2
   exit 1
 fi
 

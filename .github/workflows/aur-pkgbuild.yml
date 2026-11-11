@@ -45,40 +45,76 @@ jobs:
           git config --global user.name  "aur-bot"
           git config --global user.email "aur-bot@users.noreply.github.com"
 
-      - name: Detect new upstream release and update PKGBUILD
+      - name: Detect and update packages
         id: update
         env:
           BUMP_PKGREL: ${{ inputs.bump_pkgrel && '1' || '0' }}
+        shell: bash
         run: |
           set -euo pipefail
-          bash scripts/update-package.sh ieumoffice-bin pblsketch/openoffice v | tee /tmp/update.log
-          if grep -q '^CHANGED=1$' /tmp/update.log; then
-            ver=$(sed -n 's/^pkgver=//p' ieumoffice-bin/PKGBUILD)
-            echo "changed=1" >> "$GITHUB_OUTPUT"
-            echo "version=$ver" >> "$GITHUB_OUTPUT"
-            git diff --stat
-          else
-            echo "changed=0" >> "$GITHUB_OUTPUT"
-          fi
+          changed=0
+          changed_pkgs=""
+          changed_versions=""
 
-      - name: Validate package sources
+          update_pkg() {
+            local pkgdir=$1 repo=$2 pretag=$3
+            local log="/tmp/update-${pkgdir}.log"
+            bash scripts/update-package.sh "$pkgdir" "$repo" "$pretag" | tee "$log"
+            if grep -q '^CHANGED=1$' "$log"; then
+              local ver
+              ver=$(sed -n 's/^pkgver=//p' "${pkgdir}/PKGBUILD")
+              changed=1
+              changed_pkgs="${changed_pkgs}${pkgdir} "
+              changed_versions="${changed_versions}${pkgdir}=${ver} "
+              git diff --stat -- "${pkgdir}/PKGBUILD" "${pkgdir}/.SRCINFO" || true
+            fi
+          }
+
+          update_pkg ieumoffice-bin pblsketch/openoffice v
+          update_pkg rhwp-bin edwardkim/rhwp v
+
+          echo "changed=${changed}" >> "$GITHUB_OUTPUT"
+          echo "packages=${changed_pkgs}" >> "$GITHUB_OUTPUT"
+          echo "versions=${changed_versions}" >> "$GITHUB_OUTPUT"
+
+      - name: Validate updated package sources
         if: steps.update.outputs.changed == '1'
+        shell: bash
         run: |
           set -euo pipefail
-          rm -rf /tmp/verify && cp -r ieumoffice-bin /tmp/verify
-          chown -R builder:builder /tmp/verify
-          su builder -s /bin/bash -c 'cd /tmp/verify && makepkg --verifysource --noconfirm'
+          for pkg in ${{ steps.update.outputs.packages }}; do
+            echo "::group::verify $pkg"
+            rm -rf "/tmp/verify-${pkg}" && cp -r "$pkg" "/tmp/verify-${pkg}"
+            chown -R builder:builder "/tmp/verify-${pkg}"
+            su builder -s /bin/bash -c "cd '/tmp/verify-${pkg}' && makepkg --verifysource --noconfirm"
+            echo "::endgroup::"
+          done
 
       - name: Commit to mirror repository
         if: steps.update.outputs.changed == '1'
+        shell: bash
         run: |
           set -euo pipefail
-          git add ieumoffice-bin/PKGBUILD ieumoffice-bin/.SRCINFO
-          git commit -m "ieumoffice-bin: update to ${{ steps.update.outputs.version }}"
+          for pkg in ${{ steps.update.outputs.packages }}; do
+            git add "${pkg}/PKGBUILD" "${pkg}/.SRCINFO"
+          done
+          if git diff --cached --quiet; then
+            echo "no staged package changes"
+            exit 0
+          fi
+          msg=""
+          for pair in ${{ steps.update.outputs.versions }}; do
+            p="${pair%%=*}"
+            v="${pair#*=}"
+            if [ -n "$msg" ]; then msg="${msg}, "; fi
+            msg="${msg}${p}: update to ${v}"
+          done
+          git commit -m "$msg"
           git push
 
       - name: Deploy to AUR
         if: steps.update.outputs.changed == '1'
+        shell: bash
         run: |
           set -euo pipefail
           install -d -m700 /root/.ssh
@@ -90,6 +126,7 @@ jobs:
 
       - name: Keepalive (schedule 비활성화 방지)
         if: always()
+        shell: bash
         run: |
           # 공개 저장소는 60일간 커밋이 없으면 schedule 워크플로가 자동 비활성화된다.
           # 매주 월요일에 타임스탬프 커밋을 남겨 이를 방지한다.
@@ -109,6 +146,7 @@ jobs:
 
       - name: Report failure
         if: failure()
+        shell: bash
         run: |
           title="AUR 동기화 실패: $(date -u +%F)"
           body="로그: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
