@@ -152,7 +152,7 @@ jobs:
           title="AUR 동기화 실패: $(date -u +%F)"
           body="로그: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
           curl -fsSL -X POST \
-            -H "Authorization: Bearer ${GITHUB_TOKEN}" \
+            -H "Authorization: Bearer ${{ github.token }}" \
             -H "Accept: application/vnd.github+json" \
             "${GITHUB_API_URL}/repos/${{ github.repository }}/issues" \
             -d "{\"title\":\"${title}\",\"body\":\"${body}\"}" \
