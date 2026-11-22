@@ -16,6 +16,21 @@ pretag=${3:-v}
 api="https://api.github.com/repos/${ghrepo}"
 dl="https://github.com/${ghrepo}/releases/download"
 
+github_api_curl() {
+    local args=(-fsSL --retry 3)
+    if [[ -n ${GITHUB_TOKEN:-} ]]; then
+        local auth_header
+        auth_header="Authorization: Bearer "
+        auth_header+="${GITHUB_TOKEN}"
+        args+=(
+            -H "$auth_header"
+            -H "Accept: application/vnd.github+json"
+            -H "X-GitHub-Api-Version: 2022-11-28"
+        )
+    fi
+    curl "${args[@]}" "$@"
+}
+
 [[ -f ${pkgdir}/PKGBUILD ]] || { echo "PKGBUILD not found: ${pkgdir}" >&2; exit 1; }
 command -v makepkg >/dev/null 2>&1 || { echo "makepkg 없음" >&2; exit 1; }
 
@@ -34,7 +49,8 @@ gen_srcinfo() {
   rm -rf "${buildtmp}"
 }
 
-tag=$(curl -fsSL --retry 3 "${api}/releases/latest" | jq -r '.tag_name')
+release_json=$(github_api_curl "${api}/releases/latest")
+tag=$(printf '%s' "${release_json}" | jq -r '.tag_name')
 [[ -n ${tag} && ${tag} != null ]] || { echo "cannot read latest tag" >&2; exit 1; }
 newver=${tag#"$pretag"}
 oldver=$(sed -n 's/^pkgver=//p' "${pkgdir}/PKGBUILD")
@@ -57,7 +73,7 @@ if [[ ${newver} == "${oldver}" ]]; then
   exit 0
 fi
 
-mapfile -t assets < <(curl -fsSL --retry 3 "${api}/releases/latest" | jq -r '.assets[].name')
+mapfile -t assets < <(printf '%s' "${release_json}" | jq -r '.assets[].name')
 pick() { printf '%s\n' "${assets[@]}" | grep -E "$1" | head -1 || true; }
 
 rpm=$(pick '\.rpm$')

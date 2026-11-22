@@ -30,6 +30,7 @@ jobs:
       options: --user root
     env:
       AUR_SSH_PRIVATE_KEY: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
+      GITHUB_TOKEN: ${{ github.token }}
       AUR_KEY: /root/.ssh/aur_ci
       AUR_ROOT: /tmp/aur-push
     steps:
