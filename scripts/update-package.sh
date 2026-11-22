@@ -93,8 +93,10 @@ elif [[ -n ${appimage} ]]; then
 elif [[ -n ${tar_x86_64} ]]; then
   asset=${tar_x86_64}
 else
-  echo "no supported release asset (.rpm, .AppImage, linux-x86_64.tar.gz) in ${tag}" >&2
-  exit 1
+  echo "지원되는 릴리스 asset이 아직 없습니다 (.rpm, .AppImage, linux-x86_64.tar.gz): ${tag}"
+  echo "릴리스 asset이 게시될 때까지 패키지를 건너뜁니다."
+  echo "CHANGED=0"
+  exit 0
 fi
 
 echo "asset: ${asset}"
