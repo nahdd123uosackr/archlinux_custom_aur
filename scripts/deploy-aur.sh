@@ -34,11 +34,15 @@ for pkgdir in "${REPO_DIR}"/*/; do
   [[ -z ${pkgbase} ]] && pkgbase=$(basename "${pkgdir}")
 
   aur_dir="${AUR_ROOT}/${pkgbase}"
+  new_pkg=0
   if [[ -d ${aur_dir}/.git ]]; then
     git -C "${aur_dir}" pull --ff-only --quiet || true
-  else
-    git clone --quiet "ssh://aur@aur.archlinux.org/${pkgbase}.git" "${aur_dir}" 2>/dev/null \
-      || { echo "AUR에 ${pkgbase} 저장소가 없습니다 (최초 등록은 수동 push 필요)" >&2; continue; }
+  elif ! git clone --quiet "ssh://aur@aur.archlinux.org/${pkgbase}.git" "${aur_dir}" 2>/dev/null; then
+    # AUR은 빈 저장소를 미리 만들어 주지 않는다. 최초 push가 곧 패키지 등록이다.
+    new_pkg=1
+    rm -rf "${aur_dir}"
+    git init --quiet "${aur_dir}"
+    git -C "${aur_dir}" remote add origin "ssh://aur@aur.archlinux.org/${pkgbase}.git"
   fi
 
   # .SRCINFO 일치 검증 후 복사
@@ -49,16 +53,28 @@ for pkgdir in "${REPO_DIR}"/*/; do
     echo "변경 감지: ${pkgbase} ${ver}-${rel}"
 
     if (( DRY_RUN )); then
-      diff -u "${aur_dir}/PKGBUILD" "${pkgdir}PKGBUILD" || true
+      if (( new_pkg )); then
+        echo "  (AUR 최초 등록 예정: ${pkgbase})"
+      else
+        diff -u "${aur_dir}/PKGBUILD" "${pkgdir}PKGBUILD" || true
+      fi
       changed=1
       continue
     fi
 
     cp "${pkgdir}PKGBUILD" "${pkgdir}.SRCINFO" "${aur_dir}/"
     git -C "${aur_dir}" add PKGBUILD .SRCINFO
-    git -C "${aur_dir}" commit -q -m "upgpkg: ${pkgbase} ${ver}-${rel}"
+    if (( new_pkg )); then
+      git -C "${aur_dir}" commit -q -m "Initial import: ${pkgbase} ${ver}-${rel}"
+    else
+      git -C "${aur_dir}" commit -q -m "upgpkg: ${pkgbase} ${ver}-${rel}"
+    fi
     git -C "${aur_dir}" push -q
-    echo "AUR push 완료: ${pkgbase} ${ver}-${rel}"
+    if (( new_pkg )); then
+      echo "AUR 최초 등록 완료: ${pkgbase} ${ver}-${rel}"
+    else
+      echo "AUR push 완료: ${pkgbase} ${ver}-${rel}"
+    fi
     changed=1
   fi
 done

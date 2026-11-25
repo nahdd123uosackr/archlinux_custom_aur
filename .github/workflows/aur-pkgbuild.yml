@@ -13,6 +13,10 @@ on:
         description: '업스트림 변경이 없어도 pkgrel을 올려 AUR push 경로를 검증합니다'
         type: boolean
         default: false
+      only:
+        description: '특정 패키지 디렉터리만 처리 (공백 구분, 비우면 전체)'
+        type: string
+        default: ''
 
 permissions:
   contents: write
@@ -50,6 +54,7 @@ jobs:
         id: update
         env:
           BUMP_PKGREL: ${{ inputs.bump_pkgrel && '1' || '0' }}
+          ONLY: ${{ inputs.only }}
         shell: bash
         run: |
           set -euo pipefail
@@ -59,8 +64,14 @@ jobs:
 
           update_pkg() {
             local pkgdir=$1 repo=$2 pretag=$3
+            shift 3
+            if [[ -n ${ONLY:-} && " ${ONLY} " != *" ${pkgdir} "* ]]; then
+              echo "건너뜀 (only=${ONLY}): ${pkgdir}"
+              return 0
+            fi
             local log="/tmp/update-${pkgdir}.log"
-            bash scripts/update-package.sh "$pkgdir" "$repo" "$pretag" | tee "$log"
+            env INCLUDE_PRERELEASE="${INCLUDE_PRERELEASE:-0}" \
+              bash scripts/update-package.sh "$pkgdir" "$repo" "$pretag" "$@" | tee "$log"
             if grep -q '^CHANGED=1$' "$log"; then
               local ver
               ver=$(sed -n 's/^pkgver=//p' "${pkgdir}/PKGBUILD")
@@ -73,7 +84,14 @@ jobs:
 
           update_pkg ieumoffice-bin pblsketch/openoffice v
           update_pkg rhwp_bin edwardkim/rhwp v
-
+          INCLUDE_PRERELEASE=1 update_pkg copilot-desktop-gtk-bin sirredbeard/copilot-desktop-gtk v \
+            '^copilot-desktop-gtk-x86_64$' \
+            LICENSE NOTICE \
+            assets/desktop/copilot-desktop-gtk.desktop \
+            assets/desktop/copilot-desktop-gtk-autostart.desktop \
+            assets/desktop/copilot-desktop-gtk-daemon.desktop \
+            assets/metainfo/com.github.sirredbeard.copilot-desktop-gtk.metainfo.xml \
+            assets/icons/copilot-512.png
           echo "changed=${changed}" >> "$GITHUB_OUTPUT"
           echo "packages=${changed_pkgs}" >> "$GITHUB_OUTPUT"
           echo "versions=${changed_versions}" >> "$GITHUB_OUTPUT"

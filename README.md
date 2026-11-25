@@ -8,22 +8,25 @@ Arch Linux용 커스텀 AUR 패키지 미러입니다. AUR에는 이 저장소�
 |---|---|---|---|
 | `ieumoffice-bin` | 이음오피스(IeumOffice) — DOCX/XLSX/PPTX/PDF/HWP/마크다운 오피스 (prebuilt rpm) | [pblsketch/openoffice](https://github.com/pblsketch/openoffice) | https://aur.archlinux.org/packages/ieumoffice-bin |
 | `rhwp_bin` | rhwp — Rust/WASM 기반 HWP/HWPX 뷰어·에디터 CLI (prebuilt binary) | [edwardkim/rhwp](https://github.com/edwardkim/rhwp) | https://aur.archlinux.org/packages/rhwp_bin |
+| `copilot-desktop-gtk-bin` | Microsoft Copilot 비공식 데스크톱 앱 — GTK4/WebKitGTK (prebuilt Native AOT binary) | [sirredbeard/copilot-desktop-gtk](https://github.com/sirredbeard/copilot-desktop-gtk) | https://aur.archlinux.org/packages/copilot-desktop-gtk-bin |
 
 ## 자동화 구조
 
 ```
 GitHub Actions (30분마다, schedule)
-  ├─ 업스트림 최신 릴리스 확인 (ieumoffice-bin, rhwp_bin)
+  ├─ 업스트림 최신 릴리스 확인 (ieumoffice-bin, rhwp_bin, copilot-desktop-gtk-bin)
   ├─ 변경된 패키지의 PKGBUILD/.SRCINFO 갱신 (pkgver + sha512 + source URL)
   ├─ makepkg --verifysource 로 체크섬 검증
   ├─ 이 저장소에 커밋
-  └─ AUR 저장소에 push   ← secret AUR_SSH_PRIVATE_KEY 사용
+  └─ AUR 저장소에 push   ← secret AUR_SSH_PRIVATE_KEY 사용 (없는 패키지는 최초 등록까지 수행)
 ```
 
 로컬 데몬이 필요 없습니다. 서버에서 전 과정이 끝납니다.
 
 - 확인 주기는 30분입니다. GitHub schedule 특성상 수 분~수십 분 지연될 수 있습니다.
 - 공개 저장소는 60일간 커밋이 없으면 schedule이 자동 비활성화되므로, 매주 월요일 타임스탬프 커밋(keepalive)을 남깁니다.
+- `copilot-desktop-gtk-bin`은 업스트림이 새 빌드를 pre-release로만 올리므로 `INCLUDE_PRERELEASE=1`로 최신 pre-release까지 추적합니다.
+- 수동 실행(`workflow_dispatch`) 시 `only` 입력으로 특정 패키지만 처리할 수 있습니다.
 
 ## 최초 설정 (1회)
 
@@ -57,6 +60,14 @@ gh secret set AUR_SSH_PRIVATE_KEY < ~/.ssh/aur_ci
 # 갱신 + 미러 커밋만 (AUR push 없음)
 scripts/update-package.sh ieumoffice-bin pblsketch/openoffice v
 scripts/update-package.sh rhwp_bin edwardkim/rhwp v
+# 확장자 없는 단일 바이너리 asset + 태그 시점의 부가 파일들
+scripts/update-package.sh copilot-desktop-gtk-bin sirredbeard/copilot-desktop-gtk v \
+  '^copilot-desktop-gtk-x86_64$' LICENSE NOTICE \
+  assets/desktop/copilot-desktop-gtk.desktop \
+  assets/desktop/copilot-desktop-gtk-autostart.desktop \
+  assets/desktop/copilot-desktop-gtk-daemon.desktop \
+  assets/metainfo/com.github.sirredbeard.copilot-desktop-gtk.metainfo.xml \
+  assets/icons/copilot-512.png
 
 # 로컬에서 AUR push (Actions 대신 수동으로 돌릴 때)
 AUR_KEY=~/.ssh/aur scripts/deploy-aur.sh --dry-run
@@ -77,4 +88,5 @@ AUR_KEY=~/.ssh/aur scripts/deploy-aur.sh
 ```bash
 yay -S ieumoffice-bin
 yay -S rhwp_bin
+yay -S copilot-desktop-gtk-bin
 ```
